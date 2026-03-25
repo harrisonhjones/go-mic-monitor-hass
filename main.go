@@ -44,6 +44,7 @@ func main() {
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
 	deviceName := envOrDefault("DEVICE_NAME", "")
+	topicPrefix := envOrDefault("MQTT_TOPIC_PREFIX", "miccheck")
 	intervalStr := envOrDefault("POLL_INTERVAL", "5s")
 
 	if deviceName == "" {
@@ -60,11 +61,11 @@ func main() {
 	}
 
 	slug := strings.ToLower(strings.ReplaceAll(deviceName, " ", "_"))
-	availTopic := fmt.Sprintf("miccheck/%s/availability", slug)
+	availTopic := fmt.Sprintf("%s/%s/availability", topicPrefix, slug)
 
 	opts := mqtt.NewClientOptions().
 		AddBroker(broker).
-		SetClientID(fmt.Sprintf("miccheck-%s", slug)).
+		SetClientID(fmt.Sprintf("%s-%s", topicPrefix, slug)).
 		SetWill(availTopic, "offline", 1, true).
 		SetKeepAlive(30 * time.Second).
 		SetAutoReconnect(true)
@@ -84,14 +85,14 @@ func main() {
 	log.Printf("Connected to %s", broker)
 
 	device := discoveryDevice{
-		Identifiers:  []string{fmt.Sprintf("miccheck_%s", slug)},
+		Identifiers:  []string{fmt.Sprintf("%s_%s", topicPrefix, slug)},
 		Name:         deviceName,
-		Manufacturer: "miccheck",
+		Manufacturer: topicPrefix,
 		Model:        "Microphone Monitor",
 	}
 
-	binaryStateTopic := fmt.Sprintf("miccheck/%s/mic_in_use", slug)
-	textStateTopic := fmt.Sprintf("miccheck/%s/mic_in_use_by", slug)
+	binaryStateTopic := fmt.Sprintf("%s/%s/mic_in_use", topicPrefix, slug)
+	textStateTopic := fmt.Sprintf("%s/%s/mic_in_use_by", topicPrefix, slug)
 
 	binaryDiscovery := discoveryPayload{
 		Name:              fmt.Sprintf("%s Microphone In Use", deviceName),
