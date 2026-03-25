@@ -1,0 +1,48 @@
+- id: mic_status_light
+  alias: "Mic Status Light"
+  trigger:
+    - platform: state
+      entity_id: binary_sensor.DEVICE_NAME_HERE_microphone_in_use
+    - platform: time
+      at: "09:00:00"
+    - platform: time
+      at: "17:00:00"
+  action:
+    - choose:
+        # Work hours (M-F 9-5) and mic is active → purple
+        - conditions:
+            - condition: time
+              weekday: [mon, tue, wed, thu, fri]
+              after: "09:00:00"
+              before: "17:00:00"
+            - condition: state
+              entity_id: binary_sensor.DEVICE_NAME_HERE_microphone_in_use
+              state: "on"
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: light.YOUR_LIGHT_HERE
+              data:
+                color_name: purple
+                brightness_pct: 100
+        # Work hours (M-F 9-5) and mic is idle → green
+        - conditions:
+            - condition: time
+              weekday: [mon, tue, wed, thu, fri]
+              after: "09:00:00"
+              before: "17:00:00"
+            - condition: state
+              entity_id: binary_sensor.DEVICE_NAME_HERE_microphone_in_use
+              state: "off"
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: light.YOUR_LIGHT_HERE
+              data:
+                color_name: green
+                brightness_pct: 100
+      # Outside work hours → off
+      default:
+        - service: light.turn_off
+          target:
+            entity_id: light.YOUR_LIGHT_HERE

@@ -10,7 +10,8 @@ import (
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
-	_ "github.com/joho/godotenv/autoload"
+	"github.com/getlantern/systray"
+	"github.com/joho/godotenv"
 )
 
 type discoveryPayload struct {
@@ -40,6 +41,14 @@ func envOrDefault(key, fallback string) string {
 }
 
 func main() {
+	systray.Run(onReady, onExit)
+}
+
+func onExit() {}
+
+func onReady() {
+	_ = godotenv.Load()
+
 	broker := envOrDefault("MQTT_BROKER", "tcp://localhost:1883")
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
@@ -61,6 +70,26 @@ func main() {
 	}
 
 	slug := strings.ToLower(strings.ReplaceAll(deviceName, " ", "_"))
+
+	// Setup tray
+	systray.SetIcon(iconIdle)
+	systray.SetTitle("")
+	systray.SetTooltip("Mic Monitor - Idle")
+
+	mStatus := systray.AddMenuItem("Mic: Idle", "Current microphone status")
+	mStatus.Disable()
+	mApps := systray.AddMenuItem("Apps: None", "Applications using the mic")
+	mApps.Disable()
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Quit", "Exit the application")
+
+	// Handle quit
+	go func() {
+		<-mQuit.ClickedCh
+		systray.Quit()
+	}()
+
+	// MQTT setup
 	availTopic := fmt.Sprintf("%s/%s/availability", topicPrefix, slug)
 
 	opts := mqtt.NewClientOptions().
@@ -79,11 +108,16 @@ func main() {
 
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		log.Fatalf("MQTT connect failed: %v", token.Error())
+		systray.SetIcon(iconError)
+		systray.SetTooltip("Mic Monitor - MQTT Error")
+		mStatus.SetTitle("MQTT: Connection failed")
+		log.Printf("MQTT connect failed: %v", token.Error())
+		return
 	}
 	defer client.Disconnect(1000)
 	log.Printf("Connected to %s", broker)
 
+	// Publish HA discovery
 	device := discoveryDevice{
 		Identifiers:  []string{fmt.Sprintf("%s_%s", topicPrefix, slug)},
 		Name:         deviceName,
@@ -117,10 +151,9 @@ func main() {
 
 	publishJSON(client, fmt.Sprintf("homeassistant/binary_sensor/%s_mic_in_use/config", slug), binaryDiscovery)
 	publishJSON(client, fmt.Sprintf("homeassistant/sensor/%s_mic_in_use_by/config", slug), textDiscovery)
-
 	publish(client, availTopic, "online", true)
-	log.Printf("Discovery published, polling every %s", interval)
 
+	// Poll loop
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -133,13 +166,22 @@ func main() {
 		}
 
 		if len(names) > 0 {
+			csv := strings.Join(names, ", ")
 			publish(client, binaryStateTopic, "ON", false)
-			publish(client, textStateTopic, strings.Join(names, ", "), false)
-			log.Printf("Mic active: %s", strings.Join(names, ", "))
+			publish(client, textStateTopic, csv, false)
+
+			systray.SetIcon(iconActive)
+			systray.SetTooltip(fmt.Sprintf("Mic Monitor - Active: %s", csv))
+			mStatus.SetTitle("Mic: Active")
+			mApps.SetTitle(fmt.Sprintf("Apps: %s", csv))
 		} else {
 			publish(client, binaryStateTopic, "OFF", false)
 			publish(client, textStateTopic, "", false)
-			log.Print("Mic idle")
+
+			systray.SetIcon(iconIdle)
+			systray.SetTooltip("Mic Monitor - Idle")
+			mStatus.SetTitle("Mic: Idle")
+			mApps.SetTitle("Apps: None")
 		}
 
 		<-ticker.C
