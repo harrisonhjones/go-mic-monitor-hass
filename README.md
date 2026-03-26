@@ -28,7 +28,7 @@ HA entities are auto-created via MQTT Discovery on first run.
 ## Requirements
 
 - Windows 10/11
-- [Go 1.21+](https://go.dev/dl/)
+- [Go 1.24+](https://go.dev/dl/) (uses `tool` directive in go.mod)
 - An MQTT broker accessible from the machine (e.g. Mosquitto running on your Home Assistant host)
 - Home Assistant with the MQTT integration configured
 
@@ -45,7 +45,21 @@ go build -ldflags "-H=windowsgui" -o micmonitor.exe ./cmd/micmonitor/
 
 The `-H=windowsgui` flag suppresses the console window for `micmonitor`. Omit it during development if you want to see log output.
 
-To regenerate the tray icons (requires no external tools — pure Go):
+### Embedding the Windows exe icon
+
+`micmonitor.exe` has an embedded application icon (visible in Explorer, taskbar, etc.) generated via `goversioninfo`. The icon and version metadata are defined in `cmd/micmonitor/versioninfo.json`.
+
+The generated `resource.syso` file is committed to the repo, so a normal `go build` includes the icon automatically. You only need to regenerate it if you change `versioninfo.json` or the icon file:
+
+```bat
+go generate ./cmd/micmonitor/
+```
+
+This uses `goversioninfo` which is declared as a tool dependency in `go.mod` — no manual install needed.
+
+### Regenerating tray icons
+
+The system tray icons are generated programmatically (no external tools needed):
 
 ```bat
 go run ./cmd/icongen/
@@ -146,6 +160,8 @@ To use it, replace the placeholder entity IDs and add it to your HA `automations
 │   │   ├── main.go
 │   │   ├── icons.go
 │   │   ├── logwriter.go
+│   │   ├── versioninfo.json  # Icon + version metadata for goversioninfo
+│   │   ├── resource.syso     # Compiled Windows resource (committed)
 │   │   └── *.ico
 │   └── icongen/            # Icon generator utility
 │       └── main.go
