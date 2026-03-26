@@ -90,10 +90,11 @@ var (
 
 // initLogging redirects log output to a file when no console is attached
 // (i.e. built with -H=windowsgui). With a console, logs go to stderr as usual.
-func initLogging() {
+// Returns the log file path (empty if logging to stderr).
+func initLogging() string {
 	hwnd, _, _ := getConsoleWindow.Call()
 	if hwnd != 0 {
-		return // console attached, use default stderr logging
+		return "" // console attached, use default stderr logging
 	}
 
 	logPath := envOrDefault("LOG_FILE", "")
@@ -115,21 +116,22 @@ func initLogging() {
 
 	w, err := newRotatingWriter(logPath, maxSize)
 	if err != nil {
-		return // can't open log file, silently discard
+		return "" // can't open log file, silently discard
 	}
 	log.SetOutput(w)
 	log.Printf("Logging to file (no console detected)")
+	return logPath
 }
 
 func main() {
 	_ = godotenv.Load()
-	initLogging()
-	systray.Run(onReady, onExit)
+	logFilePath := initLogging()
+	systray.Run(func() { onReady(logFilePath) }, onExit)
 }
 
 func onExit() {}
 
-func onReady() {
+func onReady(logFilePath string) {
 	broker := envOrDefault("MQTT_BROKER", "tcp://localhost:1883")
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
@@ -163,11 +165,24 @@ func onReady() {
 	mApps := systray.AddMenuItem("Apps: None", "Applications using the mic")
 	mApps.Disable()
 	systray.AddSeparator()
+	mViewLogs := systray.AddMenuItem("View Logs", "Open log file location in Explorer")
+	if logFilePath == "" {
+		mViewLogs.Disable()
+	}
 	mQuit := systray.AddMenuItem("Quit", "Exit the application")
 
 	go func() {
-		<-mQuit.ClickedCh
-		systray.Quit()
+		for {
+			select {
+			case <-mViewLogs.ClickedCh:
+				if logFilePath != "" {
+					exec.Command("explorer.exe", "/select,", logFilePath).Start()
+				}
+			case <-mQuit.ClickedCh:
+				systray.Quit()
+				return
+			}
+		}
 	}()
 
 	// Build discovery payloads
