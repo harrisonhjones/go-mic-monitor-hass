@@ -5,14 +5,22 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	mqtt "github.com/eclipse/paho.mqtt.golang"
 	"github.com/getlantern/systray"
 	"github.com/joho/godotenv"
 )
+
+type micStatus struct {
+	Active   bool     `json:"active"`
+	Sessions []string `json:"sessions"`
+}
 
 type discoveryPayload struct {
 	Name              string          `json:"name"`
@@ -40,15 +48,88 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+// pollMicStatus runs miccheck.exe and parses its JSON output.
+func pollMicStatus(miccheckPath string) micStatus {
+	cmd := exec.Command(miccheckPath)
+	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
+	out, err := cmd.Output()
+	if err != nil {
+		log.Printf("miccheck exec error: %v", err)
+		return micStatus{}
+	}
+	var status micStatus
+	if err := json.Unmarshal(out, &status); err != nil {
+		log.Printf("miccheck parse error: %v", err)
+		return micStatus{}
+	}
+	return status
+}
+
+// findMiccheck locates miccheck.exe next to the current binary, or on PATH.
+func findMiccheck() string {
+	// Check next to our own executable first
+	exe, err := os.Executable()
+	if err == nil {
+		candidate := filepath.Join(filepath.Dir(exe), "miccheck.exe")
+		if _, err := os.Stat(candidate); err == nil {
+			return candidate
+		}
+	}
+	// Fall back to PATH
+	p, err := exec.LookPath("miccheck.exe")
+	if err == nil {
+		return p
+	}
+	return "miccheck.exe"
+}
+
+var (
+	kernel32         = syscall.NewLazyDLL("kernel32.dll")
+	getConsoleWindow = kernel32.NewProc("GetConsoleWindow")
+)
+
+// initLogging redirects log output to a file when no console is attached
+// (i.e. built with -H=windowsgui). With a console, logs go to stderr as usual.
+func initLogging() {
+	hwnd, _, _ := getConsoleWindow.Call()
+	if hwnd != 0 {
+		return // console attached, use default stderr logging
+	}
+
+	logPath := envOrDefault("LOG_FILE", "")
+	if logPath == "" {
+		exe, err := os.Executable()
+		if err == nil {
+			logPath = filepath.Join(filepath.Dir(exe), "micmonitor.log")
+		} else {
+			logPath = "micmonitor.log"
+		}
+	}
+
+	maxSize := int64(5 * 1024 * 1024) // 5MB default
+	if v := os.Getenv("LOG_MAX_SIZE"); v != "" {
+		if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+			maxSize = parsed
+		}
+	}
+
+	w, err := newRotatingWriter(logPath, maxSize)
+	if err != nil {
+		return // can't open log file, silently discard
+	}
+	log.SetOutput(w)
+	log.Printf("Logging to file (no console detected)")
+}
+
 func main() {
+	_ = godotenv.Load()
+	initLogging()
 	systray.Run(onReady, onExit)
 }
 
 func onExit() {}
 
 func onReady() {
-	_ = godotenv.Load()
-
 	broker := envOrDefault("MQTT_BROKER", "tcp://localhost:1883")
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
@@ -70,6 +151,7 @@ func onReady() {
 	}
 
 	slug := strings.ToLower(strings.ReplaceAll(deviceName, " ", "_"))
+	miccheckPath := findMiccheck()
 
 	// Setup tray
 	systray.SetIcon(iconIdle)
@@ -83,7 +165,6 @@ func onReady() {
 	systray.AddSeparator()
 	mQuit := systray.AddMenuItem("Quit", "Exit the application")
 
-	// Handle quit
 	go func() {
 		<-mQuit.ClickedCh
 		systray.Quit()
@@ -117,7 +198,6 @@ func onReady() {
 	defer client.Disconnect(1000)
 	log.Printf("Connected to %s", broker)
 
-	// Publish HA discovery
 	device := discoveryDevice{
 		Identifiers:  []string{fmt.Sprintf("%s_%s", topicPrefix, slug)},
 		Name:         deviceName,
@@ -158,15 +238,10 @@ func onReady() {
 	defer ticker.Stop()
 
 	for {
-		sessions := getActiveMicrophoneSessions()
+		status := pollMicStatus(miccheckPath)
 
-		names := make([]string, len(sessions))
-		for i, s := range sessions {
-			names[i] = filepath.Base(s)
-		}
-
-		if len(names) > 0 {
-			csv := strings.Join(names, ", ")
+		if status.Active {
+			csv := strings.Join(status.Sessions, ", ")
 			publish(client, binaryStateTopic, "ON", false)
 			publish(client, textStateTopic, csv, false)
 
@@ -193,7 +268,7 @@ func publish(client mqtt.Client, topic, payload string, retained bool) {
 	token.Wait()
 }
 
-func publishJSON(client mqtt.Client, topic string, v interface{}) {
+func publishJSON(client mqtt.Client, topic string, v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		log.Printf("JSON marshal error: %v", err)
