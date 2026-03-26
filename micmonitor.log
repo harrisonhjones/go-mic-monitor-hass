@@ -1,0 +1,6 @@
+2026/03/26 09:24:56 Logging to file (no console detected)
+2026/03/26 09:25:17 MQTT connect failed: network Error : dial tcp 192.168.0.127:1883: connectex: A connection attempt failed because the connected party did not properly respond after a period of time, or established connection failed because connected host has failed to respond.
+2026/03/26 09:26:35 Logging to file (no console detected)
+2026/03/26 09:26:45 MQTT initial connect failed: network Error : dial tcp 192.168.0.127:1883: i/o timeout (will retry in background)
+2026/03/26 09:30:07 Logging to file (no console detected)
+2026/03/26 09:30:17 MQTT initial connect failed: network Error : dial tcp 192.168.0.127:1883: i/o timeout (will retry in background)

@@ -10,3 +10,6 @@ var iconActive []byte
 
 //go:embed mic_error.ico
 var iconError []byte
+
+//go:embed mic_startup.ico
+var iconStartup []byte

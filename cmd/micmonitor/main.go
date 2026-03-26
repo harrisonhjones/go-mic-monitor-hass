@@ -154,9 +154,9 @@ func onReady() {
 	miccheckPath := findMiccheck()
 
 	// Setup tray
-	systray.SetIcon(iconIdle)
+	systray.SetIcon(iconStartup)
 	systray.SetTitle("")
-	systray.SetTooltip("Mic Monitor - Idle")
+	systray.SetTooltip("Mic Monitor - Starting...")
 
 	mStatus := systray.AddMenuItem("Mic: Idle", "Current microphone status")
 	mStatus.Disable()
@@ -213,6 +213,7 @@ func onReady() {
 		SetWill(availTopic, "offline", 1, true).
 		SetKeepAlive(30 * time.Second).
 		SetAutoReconnect(true).
+		SetConnectTimeout(10 * time.Second).
 		SetOnConnectHandler(func(c mqtt.Client) {
 			log.Printf("Connected to %s", broker)
 			publishJSON(c, binaryDiscoveryTopic, binaryDiscovery)
@@ -221,9 +222,6 @@ func onReady() {
 		}).
 		SetConnectionLostHandler(func(c mqtt.Client, err error) {
 			log.Printf("MQTT connection lost: %v", err)
-			systray.SetIcon(iconError)
-			systray.SetTooltip("Mic Monitor - MQTT Disconnected")
-			mStatus.SetTitle("MQTT: Disconnected")
 		}).
 		SetReconnectingHandler(func(c mqtt.Client, opts *mqtt.ClientOptions) {
 			log.Print("MQTT reconnecting...")
@@ -238,11 +236,7 @@ func onReady() {
 
 	client := mqtt.NewClient(opts)
 	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		systray.SetIcon(iconError)
-		systray.SetTooltip("Mic Monitor - MQTT Error")
-		mStatus.SetTitle("MQTT: Connection failed")
-		log.Printf("MQTT connect failed: %v", token.Error())
-		return
+		log.Printf("MQTT initial connect failed: %v (will retry in background)", token.Error())
 	}
 	defer client.Disconnect(1000)
 
@@ -252,8 +246,14 @@ func onReady() {
 
 	for {
 		status := pollMicStatus(miccheckPath)
+		connected := client.IsConnected()
 
-		if status.Active {
+		if !connected {
+			systray.SetIcon(iconError)
+			systray.SetTooltip("Mic Monitor - MQTT Disconnected")
+			mStatus.SetTitle("MQTT: Disconnected")
+			mApps.SetTitle("Apps: N/A")
+		} else if status.Active {
 			csv := strings.Join(status.Sessions, ", ")
 			publish(client, binaryStateTopic, "ON", false)
 			publish(client, textStateTopic, csv, false)
