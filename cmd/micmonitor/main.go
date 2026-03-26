@@ -170,33 +170,10 @@ func onReady() {
 		systray.Quit()
 	}()
 
-	// MQTT setup
+	// Build discovery payloads
 	availTopic := fmt.Sprintf("%s/%s/availability", topicPrefix, slug)
-
-	opts := mqtt.NewClientOptions().
-		AddBroker(broker).
-		SetClientID(fmt.Sprintf("%s-%s", topicPrefix, slug)).
-		SetWill(availTopic, "offline", 1, true).
-		SetKeepAlive(30 * time.Second).
-		SetAutoReconnect(true)
-
-	if username != "" {
-		opts.SetUsername(username)
-	}
-	if password != "" {
-		opts.SetPassword(password)
-	}
-
-	client := mqtt.NewClient(opts)
-	if token := client.Connect(); token.Wait() && token.Error() != nil {
-		systray.SetIcon(iconError)
-		systray.SetTooltip("Mic Monitor - MQTT Error")
-		mStatus.SetTitle("MQTT: Connection failed")
-		log.Printf("MQTT connect failed: %v", token.Error())
-		return
-	}
-	defer client.Disconnect(1000)
-	log.Printf("Connected to %s", broker)
+	binaryStateTopic := fmt.Sprintf("%s/%s/mic_in_use", topicPrefix, slug)
+	textStateTopic := fmt.Sprintf("%s/%s/mic_in_use_by", topicPrefix, slug)
 
 	device := discoveryDevice{
 		Identifiers:  []string{fmt.Sprintf("%s_%s", topicPrefix, slug)},
@@ -204,9 +181,6 @@ func onReady() {
 		Manufacturer: topicPrefix,
 		Model:        "Microphone Monitor",
 	}
-
-	binaryStateTopic := fmt.Sprintf("%s/%s/mic_in_use", topicPrefix, slug)
-	textStateTopic := fmt.Sprintf("%s/%s/mic_in_use_by", topicPrefix, slug)
 
 	binaryDiscovery := discoveryPayload{
 		Name:              fmt.Sprintf("%s Microphone In Use", deviceName),
@@ -229,9 +203,48 @@ func onReady() {
 		Icon:              "mdi:microphone-message",
 	}
 
-	publishJSON(client, fmt.Sprintf("homeassistant/binary_sensor/%s_mic_in_use/config", slug), binaryDiscovery)
-	publishJSON(client, fmt.Sprintf("homeassistant/sensor/%s_mic_in_use_by/config", slug), textDiscovery)
-	publish(client, availTopic, "online", true)
+	binaryDiscoveryTopic := fmt.Sprintf("homeassistant/binary_sensor/%s_mic_in_use/config", slug)
+	textDiscoveryTopic := fmt.Sprintf("homeassistant/sensor/%s_mic_in_use_by/config", slug)
+
+	// MQTT setup
+	opts := mqtt.NewClientOptions().
+		AddBroker(broker).
+		SetClientID(fmt.Sprintf("%s-%s", topicPrefix, slug)).
+		SetWill(availTopic, "offline", 1, true).
+		SetKeepAlive(30 * time.Second).
+		SetAutoReconnect(true).
+		SetOnConnectHandler(func(c mqtt.Client) {
+			log.Printf("Connected to %s", broker)
+			publishJSON(c, binaryDiscoveryTopic, binaryDiscovery)
+			publishJSON(c, textDiscoveryTopic, textDiscovery)
+			publish(c, availTopic, "online", true)
+		}).
+		SetConnectionLostHandler(func(c mqtt.Client, err error) {
+			log.Printf("MQTT connection lost: %v", err)
+			systray.SetIcon(iconError)
+			systray.SetTooltip("Mic Monitor - MQTT Disconnected")
+			mStatus.SetTitle("MQTT: Disconnected")
+		}).
+		SetReconnectingHandler(func(c mqtt.Client, opts *mqtt.ClientOptions) {
+			log.Print("MQTT reconnecting...")
+		})
+
+	if username != "" {
+		opts.SetUsername(username)
+	}
+	if password != "" {
+		opts.SetPassword(password)
+	}
+
+	client := mqtt.NewClient(opts)
+	if token := client.Connect(); token.Wait() && token.Error() != nil {
+		systray.SetIcon(iconError)
+		systray.SetTooltip("Mic Monitor - MQTT Error")
+		mStatus.SetTitle("MQTT: Connection failed")
+		log.Printf("MQTT connect failed: %v", token.Error())
+		return
+	}
+	defer client.Disconnect(1000)
 
 	// Poll loop
 	ticker := time.NewTicker(interval)
