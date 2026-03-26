@@ -1,3 +1,10 @@
+# Environment variables
 .env
+
+# Binaries (~ indicates a binary built while the other was unremovable)
 *.exe
 *.exe~
+
+# Logs (with rotation)
+*.log
+*.log.*
