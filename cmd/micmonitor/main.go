@@ -138,7 +138,7 @@ func onReady(logFilePath string) {
 	username := os.Getenv("MQTT_USERNAME")
 	password := os.Getenv("MQTT_PASSWORD")
 	deviceName := envOrDefault("DEVICE_NAME", "")
-	topicPrefix := envOrDefault("MQTT_TOPIC_PREFIX", "miccheck")
+	topicPrefix := envOrDefault("MQTT_TOPIC_PREFIX", "micmonitor")
 	intervalStr := envOrDefault("POLL_INTERVAL", "5s")
 
 	if deviceName == "" {
