@@ -9,7 +9,7 @@
       at: "17:00:00"
   action:
     - choose:
-        # Work hours (M-F 9-5) and mic is active → purple
+        # Work hours and mic is active → purple
         - conditions:
             - condition: time
               weekday: [mon, tue, wed, thu, fri]
@@ -25,7 +25,7 @@
               data:
                 color_name: purple
                 brightness_pct: 100
-        # Work hours (M-F 9-5) and mic is idle → green
+        # Work hours and mic is idle → green
         - conditions:
             - condition: time
               weekday: [mon, tue, wed, thu, fri]
@@ -40,6 +40,27 @@
                 entity_id: light.YOUR_LIGHT_HERE
               data:
                 color_name: green
+                brightness_pct: 100
+        # Work hours and mic is unavailable/unknown → yellow
+        - conditions:
+            - condition: time
+              weekday: [mon, tue, wed, thu, fri]
+              after: "09:00:00"
+              before: "17:00:00"
+            - condition: or
+              conditions:
+                - condition: state
+                  entity_id: binary_sensor.DEVICE_NAME_HERE_microphone_in_use
+                  state: "unavailable"
+                - condition: state
+                  entity_id: binary_sensor.DEVICE_NAME_HERE_microphone_in_use
+                  state: "unknown"
+          sequence:
+            - service: light.turn_on
+              target:
+                entity_id: light.YOUR_LIGHT_HERE
+              data:
+                color_name: yellow
                 brightness_pct: 100
       # Outside work hours → off
       default:

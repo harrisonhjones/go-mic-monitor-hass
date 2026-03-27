@@ -1,13 +1,13 @@
-package main
+package monitor
 
 import (
 	"os"
 	"sync"
 )
 
-// rotatingWriter is an io.Writer that rotates the log file when it exceeds maxBytes.
+// RotatingWriter is an io.Writer that rotates the log file when it exceeds maxBytes.
 // It keeps one backup file (path + ".1").
-type rotatingWriter struct {
+type RotatingWriter struct {
 	mu       sync.Mutex
 	path     string
 	maxBytes int64
@@ -15,7 +15,7 @@ type rotatingWriter struct {
 	size     int64
 }
 
-func newRotatingWriter(path string, maxBytes int64) (*rotatingWriter, error) {
+func NewRotatingWriter(path string, maxBytes int64) (*RotatingWriter, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
 	if err != nil {
 		return nil, err
@@ -27,7 +27,7 @@ func newRotatingWriter(path string, maxBytes int64) (*rotatingWriter, error) {
 		return nil, err
 	}
 
-	return &rotatingWriter{
+	return &RotatingWriter{
 		path:     path,
 		maxBytes: maxBytes,
 		file:     f,
@@ -35,7 +35,7 @@ func newRotatingWriter(path string, maxBytes int64) (*rotatingWriter, error) {
 	}, nil
 }
 
-func (w *rotatingWriter) Write(p []byte) (int, error) {
+func (w *RotatingWriter) Write(p []byte) (int, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
@@ -50,7 +50,7 @@ func (w *rotatingWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-func (w *rotatingWriter) rotate() error {
+func (w *RotatingWriter) rotate() error {
 	w.file.Close()
 
 	backup := w.path + ".1"

@@ -1,15 +1,22 @@
 # mic-monitor
 
-A Windows utility that detects active microphone usage and reports it to Home Assistant via MQTT. Useful for automating "on air" lights, do-not-disturb modes, or any HA automation that should react to you being on a call.
+A cross-platform utility that detects active microphone usage and reports it to Home Assistant via MQTT. Useful for automating "on air" lights, do-not-disturb modes, or any HA automation that should react to you being on a call.
+
+Supports Windows, macOS, and Linux.
 
 ## How it works
 
-The project is split into two binaries to keep concerns (and security scanner profiles) separate:
+The project is split into three binaries:
 
-- `miccheck.exe` — queries the Windows Core Audio API (via direct COM interop, no CGo) to enumerate active capture sessions on the default microphone. Outputs a single JSON line to stdout and exits.
-- `micmonitor.exe` — a system tray application that polls `miccheck.exe` on a configurable interval, updates the tray icon dynamically, and publishes state to Home Assistant via MQTT Discovery.
+- `miccheck` — detects active microphone capture sessions. Outputs a single JSON line to stdout and exits. Platform-specific implementations:
+  - Windows: queries the Core Audio API via direct COM interop (no CGo) to enumerate active capture sessions, including which processes hold them.
+  - macOS: uses CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere` via CGo to check all input devices. Reports whether the mic is active but cannot identify individual processes (macOS limitation). Requires Xcode Command Line Tools to build.
+- `micmonitor-cli` — terminal-based monitor with colorized ANSI output. Polls `miccheck`, publishes to MQTT, and prints status each cycle. Works on all platforms. Ideal for running in a terminal, as a background service, or via launchd/systemd.
+- `micmonitor-tray` — graphical system tray monitor. Same MQTT and polling logic as the CLI, but displays status via a tray icon with a right-click menu. Works on Windows (system tray), macOS (menu bar), and Linux (via libappindicator).
 
-`micmonitor` runs `miccheck` as a hidden subprocess (no console flash) and reads its output. This separation means the COM/audio binary has no shell or tray APIs, and the tray binary has no low-level audio calls.
+Both monitors shell out to `miccheck` as a subprocess and read its JSON output. This separation keeps the audio detection binary free of UI/shell APIs, and the UI binaries free of low-level audio calls.
+
+Shared logic (MQTT, discovery, polling, config) lives in `internal/monitor/` and is imported by both monitor binaries.
 
 ### MQTT topics
 
@@ -27,41 +34,76 @@ HA entities are auto-created via MQTT Discovery on first run.
 
 ## Requirements
 
-- Windows 10/11
+- Windows 10/11, macOS 10.15+, or Linux
 - [Go 1.24+](https://go.dev/dl/) (uses `tool` directive in go.mod)
-- An MQTT broker accessible from the machine (e.g. Mosquitto running on your Home Assistant host)
+- macOS builds of `miccheck` require Xcode Command Line Tools (`xcode-select --install`)
+- An MQTT broker accessible from the machine (e.g. Mosquitto on your Home Assistant host)
 - Home Assistant with the MQTT integration configured
 
 ---
 
 ## Building
 
-Clone the repo and run:
+### Windows
 
 ```bat
 go build -o miccheck.exe ./cmd/miccheck/
-go build -ldflags "-H=windowsgui" -o micmonitor.exe ./cmd/micmonitor/
+go build -o micmonitor-cli.exe ./cmd/micmonitor-cli/
+go build -ldflags "-H=windowsgui" -o micmonitor-tray.exe ./cmd/micmonitor-tray/
 ```
 
-The `-H=windowsgui` flag suppresses the console window for `micmonitor`. Omit it during development if you want to see log output.
+The `-H=windowsgui` flag on the tray binary suppresses the console window. Omit it during development to see log output.
+
+### macOS
+
+```sh
+xcode-select --install  # if not already done
+go build -o miccheck ./cmd/miccheck/
+go build -o micmonitor-cli ./cmd/micmonitor-cli/
+go build -o micmonitor-tray ./cmd/micmonitor-tray/
+```
+
+### Linux
+
+```sh
+go build -o miccheck ./cmd/miccheck/
+go build -o micmonitor-cli ./cmd/micmonitor-cli/
+go build -o micmonitor-tray ./cmd/micmonitor-tray/
+```
+
+Note: `miccheck` does not yet have a Linux implementation for microphone detection. The CLI and tray monitors will build and run, but `miccheck` will need a Linux-specific `microphone_linux.go`.
+
+### Cross-compilation
+
+The Windows `miccheck` can be cross-compiled from macOS/Linux since it uses pure `syscall` (no CGo):
+
+```sh
+GOOS=windows GOARCH=amd64 go build -o miccheck.exe ./cmd/miccheck/
+```
+
+The macOS `miccheck` cannot be cross-compiled because it uses CGo with the CoreAudio framework. Build it natively on a Mac or use a macOS CI runner.
+
+`micmonitor-cli` cross-compiles freely (pure Go, no CGo).
+
+`micmonitor-tray` requires platform-specific C toolchains due to its `systray` dependency.
 
 ### Embedding the Windows exe icon
 
-`micmonitor.exe` has an embedded application icon (visible in Explorer, taskbar, etc.) generated via `goversioninfo`. The icon and version metadata are defined in `cmd/micmonitor/versioninfo.json`.
+`micmonitor-tray.exe` has an embedded application icon generated via `goversioninfo`. The icon and version metadata are defined in `cmd/micmonitor-tray/versioninfo.json`.
 
-The generated `resource.syso` file is committed to the repo, so a normal `go build` includes the icon automatically. You only need to regenerate it if you change `versioninfo.json` or the icon file:
+The generated `resource.syso` file is committed to the repo, so a normal `go build` includes the icon automatically. Regenerate it only if you change `versioninfo.json` or the icon file:
 
 ```bat
-go generate ./cmd/micmonitor/
+go generate ./cmd/micmonitor-tray/
 ```
 
-This uses `goversioninfo` which is declared as a tool dependency in `go.mod` — no manual install needed.
+This uses `goversioninfo` which is declared as a tool dependency in `go.mod`.
 
 ### Regenerating tray icons
 
 The system tray icons are generated programmatically (no external tools needed):
 
-```bat
+```sh
 go run ./cmd/icongen/
 ```
 
@@ -89,7 +131,7 @@ DEVICE_NAME=My PC
 # How often to poll microphone status. Default: 5s
 POLL_INTERVAL=5s
 
-# Log file path (only used when no console is attached).
+# Log file path (only used by micmonitor-tray when no console is attached).
 # Defaults to micmonitor.log next to the executable.
 LOG_FILE=
 
@@ -102,47 +144,71 @@ LOG_MAX_SIZE=
 
 ## Running
 
-Place `miccheck.exe`, `micmonitor.exe`, and `.env` in the same folder, then run:
+### CLI monitor
 
-```bat
-micmonitor.exe
+Place `miccheck` and `micmonitor-cli` (plus `.env`) in the same folder:
+
+```sh
+./micmonitor-cli
 ```
 
-The tray icon appears in the system tray:
+Outputs colorized status each poll cycle:
+- Green `● Mic Idle` — no active capture sessions
+- Purple `● Mic Active` with session names — mic is in use
+- Red `● MQTT Disconnected` — broker unreachable
+
+Stop with Ctrl+C.
+
+### Tray monitor
+
+Place `miccheck` and `micmonitor-tray` (plus `.env`) in the same folder:
+
+```sh
+./micmonitor-tray
+```
+
+The tray icon appears in the system tray / menu bar:
+- Grey circle — starting up
 - Green circle — microphone idle
 - Purple circle — microphone active
-- Red circle — MQTT connection failed
+- Red circle — MQTT disconnected
 
-Right-clicking the icon shows the current mic state and which applications are using it.
+Right-click menu shows current status, active apps, "View Logs", and "Quit".
 
-To run `miccheck` standalone (useful for testing or scripting):
+### Standalone miccheck
 
-```bat
-miccheck.exe
+```sh
+./miccheck
 ```
 
-Output example:
+Output example (Windows):
 ```json
 {"active":true,"sessions":["ms-teams.exe","obs64.exe"]}
 ```
 
+Output example (macOS):
+```json
+{"active":true,"sessions":["microphone"]}
+```
+
 ### Running on startup
 
-To launch `micmonitor` automatically at login, create a shortcut to `micmonitor.exe` and place it in:
-
+Windows — create a shortcut to `micmonitor-tray.exe` in:
 ```
 %APPDATA%\Microsoft\Windows\Start Menu\Programs\Startup
 ```
 
-Or use Task Scheduler to run it at logon with "Run only when user is logged on" and no console window.
+macOS — create a launchd plist or use Login Items in System Settings.
+
+Linux — add to your desktop environment's autostart, or create a systemd user service.
 
 ---
 
 ## Home Assistant automation
 
-An example automation is included in `homeassistant/automations.yaml`. It turns a light purple when the mic is active and green when idle during weekday work hours (9am–5pm), and turns the light off outside those hours.
+An example automation is included in `homeassistant/automations.yaml`. It turns a light purple when the mic is active, green when idle, and yellow when unavailable/unknown during weekday work hours (9am–5pm). Outside those hours the light turns off.
 
-To use it, replace the placeholder entity IDs and add it to your HA `automations.yaml` or import it via the UI.
+Replace the placeholder entity IDs and add it to your HA `automations.yaml` or import via the UI.
 
 ---
 
@@ -151,23 +217,34 @@ To use it, replace the placeholder entity IDs and add it to your HA `automations
 ```
 .
 ├── cmd/
-│   ├── miccheck/           # COM audio binary (no tray/shell APIs)
+│   ├── miccheck/              # Microphone detection binary
 │   │   ├── main.go
-│   │   ├── microphone.go
+│   │   ├── microphone_windows.go
+│   │   ├── microphone_darwin.go
 │   │   ├── com_windows.go
 │   │   └── sessions_windows.go
-│   ├── micmonitor/         # System tray + MQTT binary
+│   ├── micmonitor-cli/        # Terminal monitor (all platforms)
+│   │   └── main.go
+│   ├── micmonitor-tray/       # System tray monitor (all platforms)
 │   │   ├── main.go
 │   │   ├── icons.go
-│   │   ├── logwriter.go
-│   │   ├── versioninfo.json  # Icon + version metadata for goversioninfo
-│   │   ├── resource.syso     # Compiled Windows resource (committed)
+│   │   ├── headless_windows.go
+│   │   ├── headless_other.go
+│   │   ├── versioninfo.json
+│   │   ├── resource.syso
 │   │   └── *.ico
-│   └── icongen/            # Icon generator utility
+│   └── icongen/               # Icon generator utility
 │       └── main.go
+├── internal/
+│   └── monitor/               # Shared MQTT, polling, and config logic
+│       ├── monitor.go
+│       ├── config.go
+│       ├── logwriter.go
+│       ├── exec_windows.go
+│       └── exec_other.go
 ├── homeassistant/
-│   └── automations.yaml    # Example HA automation
-├── icons/                  # Source icons (also copied to cmd/micmonitor)
+│   └── automations.yaml       # Example HA automation
+├── icons/                     # Source icons
 ├── .env.example
 └── README.md
 ```
@@ -177,14 +254,13 @@ To use it, replace the placeholder entity IDs and add it to your HA `automations
 ## Development notes
 
 - All Windows COM interop is done via `syscall` — no CGo, no external C dependencies.
+- macOS detection uses CoreAudio via CGo (`kAudioDevicePropertyDeviceIsRunningSomewhere`). Requires Xcode Command Line Tools.
+- Bluetooth audio devices may not report correctly on some macOS versions — this is a known Apple bug.
 - `miccheck` is intentionally minimal: query, serialize, exit. No long-running state.
-- `micmonitor` loads `.env` from the working directory on startup. When running from an IDE, make sure the working directory is set to the project root or the folder containing `.env`.
-- When built with `-H=windowsgui` (no console), `micmonitor` automatically writes logs to a file (`micmonitor.log` next to the exe). When a console is attached (dev builds), logs go to stderr as usual.
-- To build with a visible console for log output during development:
-  ```bat
-  go build -o micmonitor.exe ./cmd/micmonitor/
-  ```
-- To cross-check what the audio API is seeing without running the full monitor:
-  ```bat
-  miccheck.exe
+- Both monitors load `.env` from the working directory on startup. When running from an IDE, set the working directory to the folder containing `.env`.
+- `micmonitor-tray` automatically writes logs to a file when no console is attached (e.g. built with `-H=windowsgui` on Windows, or launched from a .app bundle on macOS). With a console, logs go to stderr.
+- `micmonitor-cli` always logs to stderr.
+- To build the tray app with a visible console for debugging:
+  ```sh
+  go build -o micmonitor-tray ./cmd/micmonitor-tray/
   ```

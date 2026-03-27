@@ -13,7 +13,7 @@ import (
 )
 
 func main() {
-	for _, dir := range []string{"icons", "cmd/micmonitor"} {
+	for _, dir := range []string{"icons", "cmd/micmonitor", "cmd/micmonitor-tray"} {
 		generateIcon(dir+"/mic_idle.ico", color.RGBA{0x4C, 0xAF, 0x50, 0xFF})    // green
 		generateIcon(dir+"/mic_active.ico", color.RGBA{0x9C, 0x27, 0xB0, 0xFF})  // purple
 		generateIcon(dir+"/mic_error.ico", color.RGBA{0xF4, 0x43, 0x36, 0xFF})   // red
