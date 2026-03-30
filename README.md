@@ -10,7 +10,7 @@ The project is split into three binaries:
 
 - `miccheck` — detects active microphone capture sessions. Outputs a single JSON line to stdout and exits. Platform-specific implementations:
   - Windows: queries the Core Audio API via direct COM interop (no CGo) to enumerate active capture sessions, including which processes hold them.
-  - macOS: uses CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere` via CGo to check all input devices. Reports whether the mic is active but cannot identify individual processes (macOS limitation). Requires Xcode Command Line Tools to build.
+  - macOS: uses CoreAudio's `kAudioDevicePropertyDeviceIsRunningSomewhere` via [purego](https://github.com/ebitengine/purego) to check all input devices. No CGo required — pure Go, cross-compilable. Reports whether the mic is active but cannot identify individual processes (macOS limitation).
 - `micmonitor-cli` — terminal-based monitor with colorized ANSI output. Polls `miccheck`, publishes to MQTT, and prints status each cycle. Works on all platforms. Ideal for running in a terminal, as a background service, or via launchd/systemd.
 - `micmonitor-tray` — graphical system tray monitor. Same MQTT and polling logic as the CLI, but displays status via a tray icon with a right-click menu. Works on Windows (system tray), macOS (menu bar), and Linux (via libappindicator).
 
@@ -36,7 +36,6 @@ HA entities are auto-created via MQTT Discovery on first run.
 
 - Windows 10/11, macOS 10.15+, or Linux
 - [Go 1.24+](https://go.dev/dl/) (uses `tool` directive in go.mod)
-- macOS builds of `miccheck` require Xcode Command Line Tools (`xcode-select --install`)
 - An MQTT broker accessible from the machine (e.g. Mosquitto on your Home Assistant host)
 - Home Assistant with the MQTT integration configured
 
@@ -57,7 +56,6 @@ The `-H=windowsgui` flag on the tray binary suppresses the console window. Omit 
 ### macOS
 
 ```sh
-xcode-select --install  # if not already done
 go build -o miccheck ./cmd/miccheck/
 go build -o micmonitor-cli ./cmd/micmonitor-cli/
 go build -o micmonitor-tray ./cmd/micmonitor-tray/
@@ -75,15 +73,18 @@ Note: `miccheck` does not yet have a Linux implementation for microphone detecti
 
 ### Cross-compilation
 
-The Windows `miccheck` can be cross-compiled from macOS/Linux since it uses pure `syscall` (no CGo):
+`miccheck` cross-compiles freely on all platforms — no CGo anywhere:
 
 ```sh
+# From macOS/Linux, build miccheck for Windows:
 GOOS=windows GOARCH=amd64 go build -o miccheck.exe ./cmd/miccheck/
+
+# From Windows (PowerShell), build miccheck for macOS:
+# $env:GOOS="darwin"; $env:GOARCH="arm64"; go build -o miccheck-darwin ./cmd/miccheck/
+# $env:GOOS=""; $env:GOARCH=""
 ```
 
-The macOS `miccheck` cannot be cross-compiled because it uses CGo with the CoreAudio framework. Build it natively on a Mac or use a macOS CI runner.
-
-`micmonitor-cli` cross-compiles freely (pure Go, no CGo).
+`micmonitor-cli` also cross-compiles freely (pure Go).
 
 `micmonitor-tray` requires platform-specific C toolchains due to its `systray` dependency.
 
@@ -254,7 +255,7 @@ Replace the placeholder entity IDs and add it to your HA `automations.yaml` or i
 ## Development notes
 
 - All Windows COM interop is done via `syscall` — no CGo, no external C dependencies.
-- macOS detection uses CoreAudio via CGo (`kAudioDevicePropertyDeviceIsRunningSomewhere`). Requires Xcode Command Line Tools.
+- macOS detection uses CoreAudio via [purego](https://github.com/ebitengine/purego) (`kAudioDevicePropertyDeviceIsRunningSomewhere`). No CGo — pure Go, cross-compilable.
 - Bluetooth audio devices may not report correctly on some macOS versions — this is a known Apple bug.
 - `miccheck` is intentionally minimal: query, serialize, exit. No long-running state.
 - Both monitors load `.env` from the working directory on startup. When running from an IDE, set the working directory to the folder containing `.env`.

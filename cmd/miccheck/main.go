@@ -4,10 +4,13 @@ package main
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
 )
+
+var debugMode bool
 
 type micStatus struct {
 	Active   bool     `json:"active"`
@@ -15,6 +18,9 @@ type micStatus struct {
 }
 
 func main() {
+	flag.BoolVar(&debugMode, "debug", false, "Print detailed debug info to stderr")
+	flag.Parse()
+
 	raw := getActiveMicrophoneSessions()
 
 	names := make([]string, len(raw))

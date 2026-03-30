@@ -8,3 +8,6 @@ micmonitor*
 # Logs (with rotation)
 *.log
 *.log.*
+
+# Build output
+build/

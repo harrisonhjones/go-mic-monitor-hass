@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  enable:
+    - gosec
+    - gocritic
+    - misspell
+    - prealloc
+    - unconvert
+    - unparam
+  exclusions:
+    rules:
+      # Subprocess launches are intentional (miccheck, file explorers)
+      - linters: [gosec]
+        text: "G204"
+      # Unsafe usage required for COM interop (Windows) and purego (macOS)
+      - linters: [gosec]
+        text: "G103"
+      # Integer conversion in COM interop is safe
+      - linters: [gosec]
+        text: "G115"
+      # Log file paths come from config; permissions are intentional
+      - linters: [gosec]
+        text: "G304|G302|G104"
+      # COM Release(), Windows API cleanup, syscall returns are intentionally unchecked
+      - linters: [errcheck]
+        source: "SyscallN|closeHandle|coUninitialize"
+      # File explorer open is fire-and-forget
+      - linters: [errcheck]
+        source: "\\.Start\\(\\)"
+      # Log rotation cleanup is best-effort
+      - linters: [errcheck]
+        source: "f\\.Close|file\\.Close|os\\.Remove|os\\.Rename"
+      # Icon generator is a dev-only tool, unchecked errors and permissions are acceptable
+      - linters: [errcheck, gosec]
+        path: "icongen"
