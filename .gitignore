@@ -1,10 +1,6 @@
 # Environment variables
 .env
 
-# Binaries
-miccheck*
-micmonitor*
-
 # Logs (with rotation)
 *.log
 *.log.*
